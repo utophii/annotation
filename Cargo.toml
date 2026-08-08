@@ -1,0 +1,21 @@
+[package]
+name = "annotation"
+version = "0.1.0"
+edition = "2024"
+description = "Transparent overlay for drawing on the screen"
+license = "MIT"
+authors = ["utophii"]
+
+[[bin]]
+name = "annotation"
+path = "src/main.rs"
+
+[dependencies]
+gtk4 = { version = "0.9" }
+gtk4-layer-shell = "0.4"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
+panic = "abort"
