@@ -6,8 +6,8 @@ use gtk4::gdk;
 use gtk4::glib;
 use gtk4::prelude::*;
 use gtk4::{
-    Application, ApplicationWindow, Box as GtkBox, Button, ColorButton, CssProvider,
-    DrawingArea, EventControllerKey, GestureDrag, Label, Orientation, Overlay,
+    Application, ApplicationWindow, Box as GtkBox, Button, CssProvider,
+    DrawingArea, Entry, EventControllerKey, GestureDrag, Label, Orientation, Overlay, Scale,
 };
 
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
@@ -41,6 +41,17 @@ impl DrawState {
     fn clamp_width(w: f64) -> f64 {
         w.clamp(1.0, 60.0)
     }
+}
+
+fn parse_hex_color(input: &str) -> Option<(u8, u8, u8)> {
+    let s = input.trim().trim_start_matches('#');
+    if s.len() != 6 {
+        return None;
+    }
+    let r = u8::from_str_radix(&s[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&s[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&s[4..6], 16).ok()?;
+    Some((r, g, b))
 }
 
 fn main() -> glib::ExitCode {
@@ -213,44 +224,142 @@ fn build_toolbar(
     drawing_area: &DrawingArea,
     app: &Application,
 ) -> GtkBox {
-    let toolbar = GtkBox::new(Orientation::Horizontal, 8);
-    toolbar.set_halign(gtk4::Align::End);
-    toolbar.set_valign(gtk4::Align::Start);
-    toolbar.set_margin_top(16);
-    toolbar.set_margin_end(16);
-    toolbar.add_css_class("toolbar-panel");
+    let outer = GtkBox::new(Orientation::Vertical, 6);
+    outer.set_halign(gtk4::Align::End);
+    outer.set_valign(gtk4::Align::Start);
+    outer.set_margin_top(16);
+    outer.set_margin_end(16);
+    outer.add_css_class("toolbar-panel");
+
+    let row1 = GtkBox::new(Orientation::Horizontal, 8);
 
     let title = Label::new(Some("annotation"));
     title.add_css_class("hint-label");
-    toolbar.append(&title);
+    row1.append(&title);
 
-    let palette = GtkBox::new(Orientation::Horizontal, 4);
-    let colors: [(f64, f64, f64, &str); 6] = [
-        (1.0, 0.15, 0.15, "swatch-red"),
-        (1.0, 0.7, 0.0, "swatch-orange"),
-        (1.0, 0.95, 0.1, "swatch-yellow"),
-        (0.1, 0.85, 0.2, "swatch-green"),
-        (0.1, 0.55, 1.0, "swatch-blue"),
-        (1.0, 1.0, 1.0, "swatch-white"),
+    let preview = DrawingArea::new();
+    preview.set_content_width(26);
+    preview.set_content_height(26);
+    preview.add_css_class("color-preview");
+    {
+        let state = state.clone();
+        preview.set_draw_func(move |_area, cr, w, h| {
+            let st = state.borrow();
+            cr.set_source_rgb(st.color.0, st.color.1, st.color.2);
+            cr.rectangle(0.0, 0.0, w as f64, h as f64);
+            let _ = cr.fill();
+        });
+    }
+
+    let r_scale = Scale::with_range(Orientation::Horizontal, 0.0, 255.0, 1.0);
+    let g_scale = Scale::with_range(Orientation::Horizontal, 0.0, 255.0, 1.0);
+    let b_scale = Scale::with_range(Orientation::Horizontal, 0.0, 255.0, 1.0);
+    for s in [&r_scale, &g_scale, &b_scale] {
+        s.set_draw_value(false);
+        s.set_size_request(90, -1);
+    }
+    {
+        let st = state.borrow();
+        r_scale.set_value(st.color.0 * 255.0);
+        g_scale.set_value(st.color.1 * 255.0);
+        b_scale.set_value(st.color.2 * 255.0);
+    }
+
+    let hex_entry = Entry::new();
+    hex_entry.set_placeholder_text(Some("#RRGGBB"));
+    hex_entry.set_max_width_chars(8);
+    hex_entry.add_css_class("hex-entry");
+
+    let update_from_sliders: Rc<dyn Fn()> = {
+        let state = state.clone();
+        let preview = preview.clone();
+        let r_scale = r_scale.clone();
+        let g_scale = g_scale.clone();
+        let b_scale = b_scale.clone();
+        Rc::new(move || {
+            let r = r_scale.value() / 255.0;
+            let g = g_scale.value() / 255.0;
+            let b = b_scale.value() / 255.0;
+            state.borrow_mut().color = (r, g, b);
+            preview.queue_draw();
+        })
+    };
+    {
+        let cb = update_from_sliders.clone();
+        r_scale.connect_value_changed(move |_| cb());
+    }
+    {
+        let cb = update_from_sliders.clone();
+        g_scale.connect_value_changed(move |_| cb());
+    }
+    {
+        let cb = update_from_sliders.clone();
+        b_scale.connect_value_changed(move |_| cb());
+    }
+
+    {
+        let state = state.clone();
+        let preview = preview.clone();
+        let r_scale = r_scale.clone();
+        let g_scale = g_scale.clone();
+        let b_scale = b_scale.clone();
+        hex_entry.connect_activate(move |entry| {
+            let text = entry.text();
+            if let Some((r, g, b)) = parse_hex_color(&text) {
+                state.borrow_mut().color =
+                    (r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0);
+                r_scale.set_value(r as f64);
+                g_scale.set_value(g as f64);
+                b_scale.set_value(b as f64);
+                preview.queue_draw();
+            }
+        });
+    }
+
+    let colors: [(f64, f64, f64); 6] = [
+        (1.0, 0.15, 0.15),
+        (1.0, 0.7, 0.0),
+        (1.0, 0.95, 0.1),
+        (0.1, 0.85, 0.2),
+        (0.1, 0.55, 1.0),
+        (1.0, 1.0, 1.0),
     ];
-
-    for (r, g, b, css_class) in colors {
+    let palette = GtkBox::new(Orientation::Horizontal, 4);
+    for (r, g, b) in colors {
         let btn = Button::new();
         btn.add_css_class("swatch-btn");
         let swatch = GtkBox::new(Orientation::Horizontal, 0);
         swatch.set_size_request(18, 18);
-        swatch.add_css_class(css_class);
+        let css = format!(
+            "box {{ background-color: rgb({}, {}, {}); border-radius: 4px; }}",
+            (r * 255.0) as u8,
+            (g * 255.0) as u8,
+            (b * 255.0) as u8
+        );
+        let provider = CssProvider::new();
+        provider.load_from_data(&css);
+        swatch
+            .style_context()
+            .add_provider(&provider, gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION);
         btn.set_child(Some(&swatch));
+
         {
             let state = state.clone();
+            let preview = preview.clone();
+            let r_scale = r_scale.clone();
+            let g_scale = g_scale.clone();
+            let b_scale = b_scale.clone();
             btn.connect_clicked(move |_| {
-                let mut st = state.borrow_mut();
-                st.color = (r, g, b);
+                state.borrow_mut().color = (r, g, b);
+                r_scale.set_value(r * 255.0);
+                g_scale.set_value(g * 255.0);
+                b_scale.set_value(b * 255.0);
+                preview.queue_draw();
             });
         }
         palette.append(&btn);
     }
-    toolbar.append(&palette);
+    row1.append(&palette);
 
     let minus_btn = Button::with_label("−");
     let plus_btn = Button::with_label("+");
@@ -270,8 +379,8 @@ fn build_toolbar(
             st.width = DrawState::clamp_width(st.width + 1.0);
         });
     }
-    toolbar.append(&minus_btn);
-    toolbar.append(&plus_btn);
+    row1.append(&minus_btn);
+    row1.append(&plus_btn);
 
     let clear_btn = Button::with_label("Очистить (C)");
     {
@@ -285,7 +394,7 @@ fn build_toolbar(
             area.queue_draw();
         });
     }
-    toolbar.append(&clear_btn);
+    row1.append(&clear_btn);
 
     let quit_btn = Button::with_label("Выход (Esc)");
     quit_btn.add_css_class("quit-btn");
@@ -295,9 +404,22 @@ fn build_toolbar(
             app.quit();
         });
     }
-    toolbar.append(&quit_btn);
+    row1.append(&quit_btn);
 
-    toolbar
+    let row2 = GtkBox::new(Orientation::Horizontal, 6);
+    row2.append(&Label::new(Some("R")));
+    row2.append(&r_scale);
+    row2.append(&Label::new(Some("G")));
+    row2.append(&g_scale);
+    row2.append(&Label::new(Some("B")));
+    row2.append(&b_scale);
+    row2.append(&preview);
+    row2.append(&hex_entry);
+
+    outer.append(&row1);
+    outer.append(&row2);
+
+    outer
 }
 
 fn load_css() {
@@ -336,12 +458,20 @@ fn load_css() {
             min-height: 22px;
         }
 
-        .swatch-red    { background-color: #ff2626; border-radius: 4px; }
-        .swatch-orange { background-color: #ffb300; border-radius: 4px; }
-        .swatch-yellow { background-color: #fff21a; border-radius: 4px; }
-        .swatch-green  { background-color: #1ad937; border-radius: 4px; }
-        .swatch-blue   { background-color: #1a8cff; border-radius: 4px; }
-        .swatch-white  { background-color: #ffffff; border-radius: 4px; }
+        .color-preview {
+            border-radius: 4px;
+            border: 1px solid rgba(255,255,255,0.4);
+        }
+
+        .hex-entry {
+            min-width: 90px;
+        }
+
+        .swatch-btn {
+            padding: 2px;
+            min-width: 22px;
+            min-height: 22px;
+        }
         "#,
     );
 
