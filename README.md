@@ -34,6 +34,8 @@ Now `Super+Z` → the overlay appears, draw with the mouse.
 |--------------|------------------------------|
 | `Esc` / `Q` | quit |
 | `C` | clear all |
+| `Ctrl+Z` | undo |
+| `Ctrl+Shift+Z` / `Ctrl+Y` | redo |
 | `+` / `-` | pen thickness |
 | LMB + drag | draw a line |
 | palette button in the top-right panel | color picker |

@@ -24,9 +24,21 @@ struct Stroke {
     points: Vec<(f64, f64)>,
 }
 
+enum Edit {
+    Add,
+    Clear(Vec<Stroke>),
+}
+
+enum Redo {
+    Add(Stroke),
+    Clear,
+}
+
 struct DrawState {
     strokes: Vec<Stroke>,
     current: Option<Stroke>,
+    undo_stack: Vec<Edit>,
+    redo_stack: Vec<Redo>,
     color: (f64, f64, f64),
     hue: f64,
     sat: f64,
@@ -42,11 +54,58 @@ impl DrawState {
         Self {
             strokes: Vec::new(),
             current: None,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
             color: hsv_to_rgb(hue, sat, val),
             hue,
             sat,
             val,
             width: 4.0,
+        }
+    }
+
+    fn commit_stroke(&mut self, stroke: Stroke) {
+        self.strokes.push(stroke);
+        self.undo_stack.push(Edit::Add);
+        self.redo_stack.clear();
+    }
+
+    fn clear(&mut self) {
+        self.current = None;
+        if self.strokes.is_empty() {
+            return;
+        }
+        let old = std::mem::take(&mut self.strokes);
+        self.undo_stack.push(Edit::Clear(old));
+        self.redo_stack.clear();
+    }
+
+    fn undo(&mut self) {
+        match self.undo_stack.pop() {
+            Some(Edit::Add) => {
+                if let Some(stroke) = self.strokes.pop() {
+                    self.redo_stack.push(Redo::Add(stroke));
+                }
+            }
+            Some(Edit::Clear(old)) => {
+                self.strokes = old;
+                self.redo_stack.push(Redo::Clear);
+            }
+            None => {}
+        }
+    }
+
+    fn redo(&mut self) {
+        match self.redo_stack.pop() {
+            Some(Redo::Add(stroke)) => {
+                self.strokes.push(stroke);
+                self.undo_stack.push(Edit::Add);
+            }
+            Some(Redo::Clear) => {
+                let old = std::mem::take(&mut self.strokes);
+                self.undo_stack.push(Edit::Clear(old));
+            }
+            None => {}
         }
     }
 
@@ -209,7 +268,7 @@ fn build_ui(app: &Application) {
             let mut st = state.borrow_mut();
             if let Some(stroke) = st.current.take() {
                 if !stroke.points.is_empty() {
-                    st.strokes.push(stroke);
+                    st.commit_stroke(stroke);
                 }
             }
             drop(st);
@@ -231,17 +290,25 @@ fn build_ui(app: &Application) {
         let state = state.clone();
         let area = drawing_area.clone();
         let app = app.clone();
-        key_controller.connect_key_pressed(move |_ctrl, keyval, _keycode, _modifiers| {
+        key_controller.connect_key_pressed(move |_ctrl, keyval, _keycode, modifiers| {
+            if modifiers.contains(gdk::ModifierType::CONTROL_MASK) {
+                let shift = modifiers.contains(gdk::ModifierType::SHIFT_MASK);
+                match keyval.to_lower() {
+                    gdk::Key::z if shift => state.borrow_mut().redo(),
+                    gdk::Key::z => state.borrow_mut().undo(),
+                    gdk::Key::y => state.borrow_mut().redo(),
+                    _ => return glib::Propagation::Proceed,
+                }
+                area.queue_draw();
+                return glib::Propagation::Stop;
+            }
             match keyval {
                 gdk::Key::Escape | gdk::Key::q | gdk::Key::Q => {
                     app.quit();
                     glib::Propagation::Stop
                 }
                 gdk::Key::c | gdk::Key::C => {
-                    let mut st = state.borrow_mut();
-                    st.strokes.clear();
-                    st.current = None;
-                    drop(st);
+                    state.borrow_mut().clear();
                     area.queue_draw();
                     glib::Propagation::Stop
                 }
@@ -668,10 +735,7 @@ fn build_toolbar(
         let state = state.clone();
         let area = drawing_area.clone();
         clear_btn.connect_clicked(move |_| {
-            let mut st = state.borrow_mut();
-            st.strokes.clear();
-            st.current = None;
-            drop(st);
+            state.borrow_mut().clear();
             area.queue_draw();
         });
     }
