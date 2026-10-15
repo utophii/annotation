@@ -208,7 +208,7 @@ fn build_ui(app: &Application) {
         gesture.connect_drag_end(move |_gesture, _dx, _dy| {
             let mut st = state.borrow_mut();
             if let Some(stroke) = st.current.take() {
-                if stroke.points.len() > 1 {
+                if !stroke.points.is_empty() {
                     st.strokes.push(stroke);
                 }
             }
@@ -272,10 +272,13 @@ fn draw(cr: &cairo::Context, state: &DrawState) {
     cr.set_operator(cairo::Operator::Over);
 
     for stroke in state.strokes.iter().chain(state.current.iter()) {
-        if stroke.points.len() < 2 {
+        cr.set_source_rgba(stroke.color.0, stroke.color.1, stroke.color.2, 1.0);
+
+        if let [(x, y)] = stroke.points[..] {
+            cr.arc(x, y, stroke.width / 2.0, 0.0, std::f64::consts::TAU);
+            let _ = cr.fill();
             continue;
         }
-        cr.set_source_rgba(stroke.color.0, stroke.color.1, stroke.color.2, 1.0);
         cr.set_line_width(stroke.width);
         cr.set_line_cap(cairo::LineCap::Round);
         cr.set_line_join(cairo::LineJoin::Round);
